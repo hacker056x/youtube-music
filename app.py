@@ -77,7 +77,8 @@ def download():
                     'preferredcodec': 'mp3',
                     'preferredquality': quality,
                 }],
-                'ffmpeg_location': '/usr/bin/ffmpeg'  # Render provides ffmpeg
+                'ffmpeg_location': '/usr/bin/ffmpeg',  # Render provides ffmpeg
+                'cookies': os.path.join(os.getcwd(), 'cookies.txt')  # Añadir cookies
             }
             with YoutubeDL(options) as ydl:
                 info = ydl.extract_info(url, download=True)
