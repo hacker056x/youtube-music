@@ -1,0 +1,158 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Music Downloader</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-image: url('/static/fondo.png');
+            background-size: cover;
+            background-position: center;
+            min-height: 100vh;
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center">
+    <div class="w-full max-w-md bg-white bg-opacity-90 p-6 rounded-lg shadow-lg">
+        <h1 class="text-2xl font-bold text-center text-gray-800 mb-4">YouTube Music Downloader</h1>
+        <form id="search-form" class="mb-4">
+            <input type="text" name="query" placeholder="Search for music..." class="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </form>
+        <ul id="results-list" class="max-h-40 overflow-y-auto border border-gray-300 rounded-lg mb-4"></ul>
+        <div class="flex space-x-4 mb-4">
+            <select id="quality" class="p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="128">128 kbps</option>
+                <option value="192">192 kbps</option>
+                <option value="320">320 kbps</option>
+            </select>
+            <button id="download-btn" disabled class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed">Download</button>
+        </div>
+        <div id="progress-container" class="hidden">
+            <div class="w-full bg-gray-200 rounded-full h-4">
+                <div id="progress-bar" class="bg-blue-600 h-4 rounded-full" style="width: 0%"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const searchForm = document.getElementById('search-form');
+        const searchInput = searchForm.querySelector('input[name="query"]');
+        const resultsList = document.getElementById('results-list');
+        const qualitySelect = document.getElementById('quality');
+        const downloadBtn = document.getElementById('download-btn');
+        const progressContainer = document.getElementById('progress-container');
+        const progressBar = document.getElementById('progress-bar');
+        let selectedSong = null;
+
+        searchForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const query = searchInput.value.trim();
+            if (!query) return;
+            resultsList.innerHTML = '';
+            downloadBtn.disabled = true;
+            const response = await fetch('/search', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: `query=${encodeURIComponent(query)}`
+            });
+            const data = await response.json();
+            if (data.error) {
+                alert(data.error);
+                return;
+            }
+            data.results.forEach(song => {
+                const li = document.createElement('li');
+                li.className = 'p-2 cursor-pointer hover:bg-blue-100';
+                li.textContent = `${song.title} - ${song.artist}`;
+                li.dataset.videoId = song.videoId;
+                li.addEventListener('click', () => {
+                    document.querySelectorAll('#results-list li').forEach(item => item.classList.remove('bg-blue-200'));
+                    li.classList.add('bg-blue-200');
+                    selectedSong = song;
+                    downloadBtn.disabled = false;
+                });
+                resultsList.appendChild(li);
+            });
+        });
+
+        downloadBtn.addEventListener('click', async () => {
+            if (!selectedSong) return;
+            downloadBtn.disabled = true;
+            progressContainer.classList.remove('hidden');
+            progressBar.style.width = '0%';
+            const response = await fetch('/download', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: `videoId=${selectedSong.videoId}&quality=${qualitySelect.value}`
+            });
+            const data = await response.json();
+            if (data.error) {
+                alert(data.error);
+                downloadBtn.disabled = false;
+                progressContainer.classList.add('hidden');
+                return;
+            }
+            const downloadId = data.download_id;
+            const interval = setInterval(async () => {
+                const progressResponse = await fetch(`/progress/${downloadId}`);
+                const progressData = await progressResponse.json();
+                if (progressData.error) {
+                    alert(progressData.error);
+                    clearInterval(interval);
+                    downloadBtn.disabled = false;
+                    progressContainer.classList.add('hidden');
+                    return;
+                }
+                progressBar.style.width = `${progressData.progress}%`;
+                if (progressData.progress === 100) {
+                    clearInterval(interval);
+                    window.location.href = `/download_file/${downloadId}`;
+                    downloadBtn.disabled = false;
+                    progressContainer.classList.add('hidden');
+                }
+            }, 1000);
+        });
+    </script>
+</body>
+</html>
